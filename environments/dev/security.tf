@@ -22,7 +22,7 @@ resource "aws_security_group_rule" "allow_ssh" {
   protocol  = "tcp"
   #cidr_blocks       = ["${chomp(data.http.my_ip.response_body)}/32"]
   # Lógica: Se var.admin_ip existir, usa ele. Se não, usa o data source.
-  cidr_blocks       = [var.admin_ip != "" ? "${var.admin_ip}" : "${chomp(data.http.my_ip.response_body)}/32"]  #tirei o /32 do var.admin_ip porque ele já vem com mascara
+  cidr_blocks       = [var.admin_ip != "" ? "${var.admin_ip}" : "${chomp(data.http.my_ip.response_body)}/32"] #tirei o /32 do var.admin_ip porque ele já vem com mascara
   security_group_id = aws_security_group.sg.id
   description       = "Acesso SSH restrito ao IP publico do administrador"
 }

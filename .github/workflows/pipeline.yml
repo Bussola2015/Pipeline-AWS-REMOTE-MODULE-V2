@@ -1,0 +1,114 @@
+name: "AWS Infrastructure Pipeline"
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'environments/dev/**'
+    #   - '.github/workflows/**'  #se alterar o pipeline, roda o terraform apply
+    #   - '.tflint.hcl'           #se alterar as regras do tflint, roda o terraform apply
+
+  pull_request: 
+    branches: [ main ]
+    paths:
+      - 'environments/dev/**'
+
+jobs:
+  pipeline:
+    name: "Terraform Action"
+    runs-on: ubuntu-22.04
+    env:
+      WORKING_DIR: ./environments/dev
+      TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+
+    steps:
+      # git clone no meu repo para pegar o código do terraform  
+      - name: Checkout
+        uses: actions/checkout@v4
+      # binário do terraform para rodar os comandos do terraform, libs, etc
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # --- TFLINT SETUP ---
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.61.0  
+
+      # --- CACHE (Deve vir ANTES do Init) ---
+      - name: Cache Terraform Plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-terraform-aws-${{ hashFiles('**/.terraform.lock.hcl') }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ${{ env.WORKING_DIR }}
+
+    # Esse passo faço manualmente para garantir que o código esteja formatado antes de rodar o Plan e o Apply. O Check de formatação é importante para manter um padrão de código, mas o Format em si pode ser opcional dependendo do seu fluxo de trabalho. Se você quiser que o pipeline corrija automaticamente a formatação, pode descomentar o passo do Terraform Format.
+    #   - name: Terraform Format
+    #     run: terraform fmt -recursive
+    #     working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+        working-directory: ${{ env.WORKING_DIR }}
+      # ---------------------------------------  
+
+      - name: Init TFLint
+        run: tflint --init --config ../../.tflint.hcl
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Run TFLint
+        run: tflint -f compact --config ../../.tflint.hcl
+        working-directory: ${{ env.WORKING_DIR }}
+
+    # --- NOVO: CHECKOV (Com bloqueio) ---
+    #   - name: Teste de Segurança com Checkov
+    #     uses: bridgecrewio/checkov-action@master
+    #     with:
+    #       directory: ${{ env.WORKING_DIR }}
+    #       soft_fail: false # TRAVA o pipelin e se houver erro de segurança - Se true, termina o pipeline com sucesso mesmo se houver erros de segurança, o que é útil durante a fase de configuração inicial do Checkov ou enquanto você corrige os avisos. Depois de corrigir os problemas, você pode definir isso como false para garantir que o pipeline falhe se forem encontrados novos problemas de segurança. Isso ajuda a manter um padrão de segurança mais rigoroso no futuro.
+    #       framework: terraform
+    #       output_format: cli # <-- (Este é o padrão se você omitir)
+
+      # Terraform Apply     
+      - name: Terraform Plan
+        run: terraform plan -var="admin_ip=${{ secrets.MY_PERSONAL_IP }}" -var-file="terraform.tfvars"
+        working-directory: ${{ env.WORKING_DIR }}
+
+      # Esta condição garante que o Apply SÓ rode quando o código entrar na MAIN
+      # (Seja por push direto ou por MERGE de um PR)
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -var="admin_ip=${{ secrets.MY_PERSONAL_IP }}" -var-file="terraform.tfvars" -auto-approve
+        working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Upload SSH Key
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssh-key-debian
+          path: ${{ env.WORKING_DIR }}/aws-key-dev.pem
+
+      # --- NOVO: NOTIFICAÇÃO TELEGRAM ---
+      - name: Notificar Telegram
+        if: always()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          format: markdown
+          message: |
+            ☁️ *Pipeline AWS:* `${{ github.workflow }}`
+            📊 *Status:* ${{ job.status == 'success' && '✅ SUCESSO' || '❌ FALHA' }}
+            📂 *Projeto:* `${{ github.repository }}`
+            🔗 [Ver Detalhes](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})

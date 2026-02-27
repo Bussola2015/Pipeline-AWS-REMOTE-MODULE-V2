@@ -35,7 +35,10 @@ jobs:
         with:
           tflint_version: v0.61.0  
 
-      # --- CACHE (Deve vir ANTES do Init) ---
+      # Cria pasta de cache dos plugins do terraform para acelerar as execuções futuras. O cache é salvo entre as execuções do pipeline, e a chave do cache é baseada no conteúdo do arquivo .terraform.lock.hcl, que lista as versões exatas dos provedores usados no projeto. Assim, se as dependências mudarem, o cache será invalidado e atualizado.
+      - name: Create Plugin Cache Dir
+        run: mkdir -p ~/.terraform.d/plugin-cache
+
       - name: Cache Terraform Plugins
         uses: actions/cache@v4
         with:
